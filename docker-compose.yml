@@ -1,0 +1,137 @@
+# TokoAI Microservices — jalankan semua service dengan satu perintah:
+#   docker compose up -d --build
+#
+# Secret (GEMINI_API_KEY, JWT_SECRET, INTERNAL_API_KEY) dibaca dari file .env masing-masing service.
+# URL antar-service di .env (localhost:...) di-override di sini dengan nama service di jaringan docker.
+#
+# Database SQLite TIDAK disimpan di dalam docker: tiap service me-mount folder ./service-*/data
+# (file yang sama dipakai juga saat service dijalankan manual dengan npm run dev).
+#
+# Urutan start (menunggu healthcheck):
+#   catalog ─┬─ order ─┐
+#            ├─────────┼─ mcp ── agent ─┐
+#   ticket ──┴─────────┘                ├─ gateway ── frontend
+#   (catalog, order, ticket) ───────────┘
+
+name: tokoai
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 30
+  start_period: 10s
+
+services:
+  catalog:
+    build: ./service-catalog
+    env_file: ./service-catalog/.env
+    environment:
+      PORT: 4001
+    volumes:
+      - ./service-catalog/data:/app/data   # file SQLite di folder proyek (bukan di dalam docker)
+    ports:
+      - "127.0.0.1:4001:4001"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  order:
+    build: ./service-order
+    env_file: ./service-order/.env
+    environment:
+      PORT: 4002
+      CATALOG_SERVICE_URL: http://catalog:4001
+    volumes:
+      - ./service-order/data:/app/data   # file SQLite di folder proyek (bukan di dalam docker)
+    ports:
+      - "127.0.0.1:4002:4002"
+    depends_on:
+      catalog: { condition: service_healthy }
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  ticket:
+    build: ./service-ticket
+    env_file: ./service-ticket/.env
+    environment:
+      PORT: 4003
+    volumes:
+      - ./service-ticket/data:/app/data   # file SQLite di folder proyek (bukan di dalam docker)
+    ports:
+      - "127.0.0.1:4003:4003"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  mcp:
+    build: ./service-mcp
+    env_file: ./service-mcp/.env
+    environment:
+      PORT: 5000
+      CATALOG_SERVICE_URL: http://catalog:4001
+      ORDER_SERVICE_URL: http://order:4002
+      TICKET_SERVICE_URL: http://ticket:4003
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      catalog: { condition: service_healthy }
+      order: { condition: service_healthy }
+      ticket: { condition: service_healthy }
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  agent:
+    build: ./service-agent
+    env_file: ./service-agent/.env
+    environment:
+      MCP_SSE_URL: http://mcp:5000/sse
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      mcp: { condition: service_healthy }
+    healthcheck:
+      <<: *healthcheck
+      start_period: 30s # ADK meng-compile & bundle agent saat start
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8000/list-apps').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  gateway:
+    build: ./service-gateway
+    env_file: ./service-gateway/.env
+    environment:
+      PORT: 8080
+      CATALOG_SERVICE_URL: http://catalog:4001
+      ORDER_SERVICE_URL: http://order:4002
+      TICKET_SERVICE_URL: http://ticket:4003
+      AGENT_SERVICE_URL: http://agent:8000
+    volumes:
+      - ./service-gateway/data:/app/data   # file SQLite di folder proyek (bukan di dalam docker)
+    ports:
+      - "8080:8080"
+    depends_on:
+      catalog: { condition: service_healthy }
+      order: { condition: service_healthy }
+      ticket: { condition: service_healthy }
+      agent: { condition: service_healthy }
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+    restart: unless-stopped
+
+  frontend:
+    build: ./service-frontend
+    environment:
+      # Dipakai oleh BROWSER, jadi harus alamat yang bisa diakses dari host (bukan http://gateway:8080)
+      NUXT_PUBLIC_API_BASE: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      gateway: { condition: service_healthy }
+    restart: unless-stopped
+

@@ -1,0 +1,26 @@
+{
+  "name": "service-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "web": "npx adk web src --port 8000",
+    "api": "npx adk api_server src --port 8000"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@google/adk": "^2.5.0",
+    "@google/adk-devtools": "^2.5.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "dotenv": "^18.0.10"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
